@@ -1,0 +1,14 @@
+fastapi==0.115.8
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pydantic==2.10.6
+pydantic-settings==2.7.1
+numpy==2.0.2
+pillow==10.4.0
+
+openai==1.66.3
+
+# anomalib は環境差が出やすいのでまずは最新でOK（固定したければ後でpin）
+anomalib
+torch
+torchvision
