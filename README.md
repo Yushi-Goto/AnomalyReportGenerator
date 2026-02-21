@@ -36,7 +36,7 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
    conda activate AnomalyReportGeneratorWithAnomalibMainBranch
    ```
 
-2. APIサーバを起動
+2. ASGIサーバを起動
    ```commandline
    uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
    ```
@@ -53,3 +53,14 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
    curl http://127.0.0.1:8000/health
    ```
    {"ok":true} が返れば FastAPIの雛形自体は動いています。
+
+# 推論
+1. JSON形式の出力の推論
+   ```commandline
+   curl -X POST "http://127.0.0.1:8000/anomaly/predict" -F "file=@datasets\MVTecAD\bottle\test\good\000.png"
+   ```
+
+2. ヒートマップの取得
+   ```commandline
+   curl -X POST "http://127.0.0.1:8000/anomaly/heatmap?request_id=＜request_id＞&overlay=1&normalize=1" -o heatmap.png
+   ```

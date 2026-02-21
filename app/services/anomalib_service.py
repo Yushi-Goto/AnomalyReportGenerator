@@ -1,12 +1,17 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Optional, Tuple
+import os
+import tempfile
 
 import numpy as np
 from PIL import Image
 
-# Anomalib
-from anomalib.deploy import TorchInferencer  # v1系では deploy.TorchInferencer が基本 :contentReference[oaicite:3]{index=3}
+import torch
+from anomalib.engine import Engine
+from anomalib.utils.post_processing import superimpose_anomaly_map
+
 
 @dataclass
 class InferenceOutput:
@@ -15,52 +20,134 @@ class InferenceOutput:
     threshold: Optional[float]
     extra: Dict[str, Any]
 
-def _pil_to_rgb_np(image: Image.Image) -> np.ndarray:
-    return np.asarray(image.convert("RGB"))
+
+def _resolve_accelerator(device: str) -> Tuple[str, int]:
+    dev = (device or "auto").lower()
+    if dev in ["cuda", "gpu", "auto"] and torch.cuda.is_available():
+        return "gpu", 1
+    return "cpu", 1
+
+
+def _load_model_class(model_class_name: str):
+    import anomalib.models as models
+    if not hasattr(models, model_class_name):
+        raise ValueError(
+            f"Unknown model class '{model_class_name}'. "
+            f"Set ANOMALIB_MODEL_CLASS to a valid class in anomalib.models"
+        )
+    return getattr(models, model_class_name)
+
 
 class AnomalibService:
-    def __init__(self, model_path: str, device: str = "auto", metadata_path: Optional[str] = None):
-        # TorchInferencer の引数は anomalib バージョンで微妙に違うことがあるので、
-        # 「path+device」形式をまず試し、ダメなら最小限のフォールバックをします。
+    def __init__(self, ckpt_path: str, model_class: str, device: str = "auto"):
+        self.ckpt_path = ckpt_path
+        self.model_class = model_class
+
+        accelerator, devices = _resolve_accelerator(device)
+        self.engine = Engine(accelerator=accelerator, devices=devices)
+
+        ModelCls = _load_model_class(model_class)
+        self.model = ModelCls()
+
+    def _predict_from_path(self, image_path: str):
+        preds = self.engine.predict(model=self.model, data_path=image_path, ckpt_path=self.ckpt_path)
+        if preds is None or len(preds) == 0:
+            raise RuntimeError("No predictions returned by engine.predict()")
+        return preds[0]
+
+    def predict_all(self, image: Image.Image) -> Tuple[InferenceOutput, np.ndarray, np.ndarray]:
+        """
+        Returns:
+          - info: InferenceOutput (score/label/etc)
+          - base_rgb: np.uint8 HxWx3 (推論に合わせたサイズの元画像)
+          - anomaly_map: np.float32 HxW（anomaly_map）
+        """
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            tmp_path = f.name
         try:
-            self.inferencer = TorchInferencer(path=model_path, device=device)  # v1.1系の例 :contentReference[oaicite:4]{index=4}
-        except TypeError:
-            # 古いAPIでは config/model_source 形式が存在するため、最低限の対応だけ入れる
-            # （必要なら、ここをあなたの anomalib バージョンに合わせて固めます）
-            self.inferencer = TorchInferencer(model_path)  # type: ignore
+            image_rgb = image.convert("RGB")
+            image_rgb.save(tmp_path, format="PNG")
+            pred = self._predict_from_path(tmp_path)
 
-        self.metadata_path = metadata_path
+            # pred_score
+            pred_score = None
+            if hasattr(pred, "pred_score"):
+                try:
+                    ps = pred.pred_score
+                    pred_score = float(ps.reshape(-1)[0].item()) if hasattr(ps, "numel") else float(ps)
+                except Exception:
+                    pred_score = None
 
-    def predict_pil(self, image: Image.Image) -> InferenceOutput:
-        img_np = _pil_to_rgb_np(image)
+            # pred_label
+            pred_label = None
+            if hasattr(pred, "pred_label"):
+                try:
+                    pl = pred.pred_label
+                    pred_label = str(int(pl.reshape(-1)[0].item())) if hasattr(pl, "numel") else str(pl)
+                except Exception:
+                    pred_label = None
 
-        # predictは path or ndarray を受ける :contentReference[oaicite:5]{index=5}
-        result = self.inferencer.predict(img_np)
+            # threshold（無い場合あり）
+            threshold = None
+            if hasattr(pred, "threshold"):
+                try:
+                    th = pred.threshold
+                    threshold = float(th.reshape(-1)[0].item()) if hasattr(th, "numel") else float(th)
+                except Exception:
+                    threshold = None
 
-        # ImageResultの属性名は anomalib バージョンで差があるので安全に取る
-        pred_score = getattr(result, "pred_score", None)
-        pred_label = getattr(result, "pred_label", None)
-        threshold = getattr(result, "threshold", None)
+            if not hasattr(pred, "anomaly_map"):
+                raise RuntimeError("Prediction does not include anomaly_map")
 
-        extra: Dict[str, Any] = {}
-        for k in ["anomaly_map", "heat_map", "box", "mask"]:
-            if hasattr(result, k):
-                extra[k] = f"<{k}:available>"
+            anomaly_map = pred.anomaly_map[0].squeeze().detach().cpu().numpy().astype(np.float32)
 
-        # label を文字列化
-        if pred_label is not None and not isinstance(pred_label, str):
-            pred_label = str(pred_label)
+            # base image size を prediction.image に合わせる（あれば）
+            if hasattr(pred, "image"):
+                h, w = pred.image.shape[-2:]
+                base_rgb = np.array(image_rgb.resize((w, h)), dtype=np.uint8)
+            else:
+                base_rgb = np.array(image_rgb, dtype=np.uint8)
 
-        if pred_score is not None:
+            extra: Dict[str, Any] = {"anomaly_map": "<available>"}
+            if hasattr(pred, "pred_mask"):
+                extra["pred_mask"] = "<available>"
+
+            info = InferenceOutput(
+                pred_label=pred_label,
+                pred_score=pred_score,
+                threshold=threshold,
+                extra=extra,
+            )
+            return info, base_rgb, anomaly_map
+        finally:
             try:
-                pred_score = float(pred_score)
+                os.remove(tmp_path)
             except Exception:
                 pass
 
-        if threshold is not None:
-            try:
-                threshold = float(threshold)
-            except Exception:
-                pass
+    def make_heatmap_png(
+        self,
+        base_rgb: np.ndarray,
+        anomaly_map: np.ndarray,
+        overlay: bool = True,
+        normalize: bool = True,
+    ) -> bytes:
+        """
+        base_rgb: uint8 HxWx3
+        anomaly_map: float HxW
+        """
+        if overlay:
+            heat = superimpose_anomaly_map(anomaly_map=anomaly_map, image=base_rgb, normalize=normalize)
+        else:
+            # overlayしない場合は、疑似的に黒画像に重畳して “ヒートマップ単体” を作る
+            black = np.zeros_like(base_rgb, dtype=np.uint8)
+            heat = superimpose_anomaly_map(anomaly_map=anomaly_map, image=black, normalize=normalize)
 
-        return InferenceOutput(pred_label=pred_label, pred_score=pred_score, threshold=threshold, extra=extra)
+        if heat.dtype != np.uint8:
+            heat = np.clip(heat, 0, 255).astype(np.uint8)
+
+        img = Image.fromarray(heat)
+        buf = tempfile.SpooledTemporaryFile()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return buf.read()

@@ -1,0 +1,16 @@
+# ===== IDE =====
+.idea/
+
+# ===== Anomalib output =====
+results/
+
+# ===== Temp images =====
+**/Temp/
+heatmap.png
+
+# ===== Environment =====
+.env
+
+# ===== Python =====
+__pycache__/
+*.pyc
