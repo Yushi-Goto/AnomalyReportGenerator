@@ -88,6 +88,7 @@ async def anomaly_predict(file: UploadFile = File(...)):
             "anomaly_map": anomaly_map,
             "image_bytes": content,   # 追加：元画像bytes
             "image_mime": mime,       # 追加：mime
+            "heat_map": None,         # 追加：ヒートマップ画像（このエンドポイントではまだ存在しない）
         },
     )
 
@@ -126,22 +127,45 @@ async def anomaly_heatmap(
     if data is None:
         if file is None:
             raise HTTPException(status_code=400, detail="Provide request_id or upload file")
+        # TODO: このインデント部分は file：元画像が添えられていた場合に再推論を行うが、こういったフォールバックはややこしくなるため、
+        #  TTLが切れてキャッシュが削除されていた場合はすべて手動で前のエンドポイントからやり直してもらった方がよさそう。
+        #  ↑デバッグ用に残しておいてもよいかも。便利かも。
         content = await file.read()
         try:
             image = Image.open(io.BytesIO(content))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid image file")
         info, base_rgb, anomaly_map = anomalib_svc.predict_all(image)
+        new_request_id = uuid.uuid4().hex
+        mime = file.content_type or "image/png"
+        if not mime.startswith("image/"):
+            mime = "image/png"
     else:
+        new_request_id = request_id
         info = data["info"]
         base_rgb = data["base_rgb"]
         anomaly_map = data["anomaly_map"]
+        content = data["image_bytes"]
+        mime = data["image_mime"]
 
     png = anomalib_svc.make_heatmap_png(
         base_rgb=base_rgb,
         anomaly_map=anomaly_map,
         overlay=bool(overlay),
         normalize=bool(normalize),
+    )
+
+    # 再度キャッシュする（指定のリクエストIDに対応するキャッシュが残っていた場合もTTLは新たに初期値に更新される。）
+    cache.set(
+        new_request_id,
+        {
+            "info": info,
+            "base_rgb": base_rgb,
+            "anomaly_map": anomaly_map,
+            "image_bytes": content,   # 追加：元画像bytes
+            "image_mime": mime,       # 追加：mime
+            "heat_map": png,          # 追加：ヒートマップ画像
+        },
     )
 
     headers = {}
@@ -154,6 +178,7 @@ async def anomaly_heatmap(
             headers["X-Request-Id"] = request_id
 
     return StreamingResponse(io.BytesIO(png), media_type="image/png", headers=headers)
+
 
 @app.post("/gpt/explain", response_model=ExplainResponse)
 def explain(req: ExplainRequest):
