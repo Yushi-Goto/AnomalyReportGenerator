@@ -119,6 +119,10 @@ async def anomaly_heatmap(
     if request_id:
         data = cache.get(request_id)
 
+    # request_id 指定なのにキャッシュが無い場合は、fileが無ければ 404 にする（TTL切れを明確化）
+    if request_id and data is None and file is None:
+        raise HTTPException(status_code=404, detail="request_id not found (expired). Run /anomaly/predict again")
+
     if data is None:
         if file is None:
             raise HTTPException(status_code=400, detail="Provide request_id or upload file")
