@@ -113,6 +113,13 @@ async def anomaly_heatmap(
     - 基本は request_id を使う（同じ画像を再送しない）
     - 予備として file でも生成可能（単発利用/デバッグ用）
     """
+    # overlay と normalize は内部で1に固定しておく。
+    # 理由としては、これら値を固定しておかないと、
+    # この後のエンドポイント/anomaly/explain でこれら値が固定されていないヒートマップ画像が使われてしまい、
+    # 出力される説明にぶれが生じてしまうため。
+    overlay = 1
+    normalize = 1
+
     if anomalib_svc is None:
         raise HTTPException(status_code=500, detail="AnomalibService not initialized")
 
