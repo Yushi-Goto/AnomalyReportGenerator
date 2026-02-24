@@ -17,12 +17,12 @@ from app.schemas.api import (
 )
 from app.services.anomalib_service import AnomalibService, InferenceOutput
 from app.services.cache_service import TTLCache
-# from app.services.gpt_service import GPTService
+from app.services.gpt_service import GPTService
 
 app = FastAPI(title="Anomalib + GPT API", version="0.4.0")
 
 anomalib_svc: AnomalibService | None = None
-# gpt_svc: GPTService | None = None
+gpt_svc: GPTService | None = None
 
 # request_id -> dict
 # 例:
@@ -45,11 +45,11 @@ def startup() -> None:
         model_class=settings.anomalib_model_class,
         device=settings.anomalib_device,
     )
-    # gpt_svc = GPTService(
-    #     api_key=settings.openai_api_key,
-    #     model=settings.openai_model,
-    #     instructions=settings.openai_instructions,
-    # )
+    gpt_svc = GPTService(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        instructions=settings.openai_instructions,
+    )
 
 
 @app.get("/health")
@@ -178,6 +178,70 @@ async def anomaly_heatmap(
             headers["X-Request-Id"] = request_id
 
     return StreamingResponse(io.BytesIO(png), media_type="image/png", headers=headers)
+
+
+@app.post("/anomaly/explain", response_model=ExplainResponse)
+def anomaly_explain(
+    request_id: str = Query(..., description="Use request_id from /anomaly/predict"),
+    req: AnomalyExplainRequest = AnomalyExplainRequest(),
+):
+    """
+    段階1：
+    - request_id のキャッシュから「元画像bytes + anomaly_map」を取り出す
+    - 重畳PNGを生成（またはキャッシュがあれば再利用）
+    - GPTに「全体画像 + 重畳画像」を渡して説明文を返す
+    ※ TTL切れ時はフォールバックせず 404（/predict のやり直しを促す）
+
+    実装メモ
+    - /anomaly/heatmap と同様に file フォールバックをデバッグ専用に実装してもいいかも。
+    """
+    if anomalib_svc is None:
+        raise HTTPException(status_code=500, detail="AnomalibService not initialized")
+    if gpt_svc is None:
+        raise HTTPException(status_code=500, detail="GPTService not initialized")
+
+    data = cache.get(request_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="request_id not found (expired). Run /anomaly/predict again")
+
+    image_bytes: Optional[bytes] = data.get("image_bytes")
+    image_mime: str = data.get("image_mime", "image/png")
+    # 以下については必要ないかも
+    if image_bytes is None:
+        # 今後 predict を改修し忘れた場合にすぐ気づけるように明示
+        raise HTTPException(status_code=500, detail="cached image_bytes not found. Run /anomaly/predict again")
+
+    info = data["info"]
+    base_rgb = data["base_rgb"]
+    anomaly_map = data["anomaly_map"]
+
+    overlay_png: Optional[bytes] | None = data.get("heat_map")
+    if overlay_png is None:
+        # ヒートマップ画像については、派生成生物なので材料があればここで作り直す（フォールバック）。
+        overlay_png = anomalib_svc.make_heatmap_png(
+            base_rgb=base_rgb,
+            anomaly_map=anomaly_map,
+            overlay=True,
+            normalize=True,
+        )
+        data["heat_map"] = overlay_png
+
+    anomaly_payload = {
+        "pred_label": info.pred_label,
+        "pred_score": info.pred_score,
+        "threshold": info.threshold,
+        "extra": info.extra,
+    }
+
+    text = gpt_svc.explain_with_images(
+        context=req.context,
+        anomaly=anomaly_payload,
+        original_image_bytes=image_bytes,
+        original_mime=image_mime,
+        overlay_png_bytes=overlay_png,
+        lang=req.lang,
+    )
+    return ExplainResponse(text=text)
 
 
 @app.post("/gpt/explain", response_model=ExplainResponse)
