@@ -17,6 +17,7 @@ class GPTService:
         self.client = OpenAI(api_key=api_key)
         self.model = model
         self.instructions = instructions
+        print("Using model:", self.model)
 
     def explain(self, payload: Dict[str, Any]) -> str:
         """
