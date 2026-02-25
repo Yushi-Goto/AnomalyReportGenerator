@@ -12,14 +12,14 @@ from app.core.config import settings
 from app.schemas.api import (
     PredictResponse,
     ExplainRequest,
-    ExplainResponse,
+    ExplainStructuredResponse,
     AnomalyExplainRequest,
 )
 from app.services.anomalib_service import AnomalibService, InferenceOutput
 from app.services.cache_service import TTLCache
 from app.services.gpt_service import GPTService
 
-app = FastAPI(title="Anomalib + GPT API", version="0.4.0")
+app = FastAPI(title="Anomalib + GPT API", version="0.5.0")
 
 anomalib_svc: AnomalibService | None = None
 gpt_svc: GPTService | None = None
@@ -86,9 +86,9 @@ async def anomaly_predict(file: UploadFile = File(...)):
             "info": info,
             "base_rgb": base_rgb,
             "anomaly_map": anomaly_map,
-            "image_bytes": content,   # 追加：元画像bytes
-            "image_mime": mime,       # 追加：mime
-            "heat_map": None,         # 追加：ヒートマップ画像（このエンドポイントではまだ存在しない）
+            "image_bytes": content,
+            "image_mime": mime,
+            "heat_map": None,
         },
     )
 
@@ -142,8 +142,10 @@ async def anomaly_heatmap(
             image = Image.open(io.BytesIO(content))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid image file")
+
         info, base_rgb, anomaly_map = anomalib_svc.predict_all(image)
         new_request_id = uuid.uuid4().hex
+
         mime = file.content_type or "image/png"
         if not mime.startswith("image/"):
             mime = "image/png"
@@ -169,9 +171,9 @@ async def anomaly_heatmap(
             "info": info,
             "base_rgb": base_rgb,
             "anomaly_map": anomaly_map,
-            "image_bytes": content,   # 追加：元画像bytes
-            "image_mime": mime,       # 追加：mime
-            "heat_map": png,          # 追加：ヒートマップ画像
+            "image_bytes": content,
+            "image_mime": mime,
+            "heat_map": png,
         },
     )
 
@@ -187,16 +189,15 @@ async def anomaly_heatmap(
     return StreamingResponse(io.BytesIO(png), media_type="image/png", headers=headers)
 
 
-@app.post("/anomaly/explain", response_model=ExplainResponse)
+@app.post("/anomaly/explain", response_model=ExplainStructuredResponse)
 def anomaly_explain(
     request_id: str = Query(..., description="Use request_id from /anomaly/predict"),
     req: AnomalyExplainRequest = AnomalyExplainRequest(),
 ):
     """
-    段階1：
     - request_id のキャッシュから「元画像bytes + anomaly_map」を取り出す
     - 重畳PNGを生成（またはキャッシュがあれば再利用）
-    - GPTに「全体画像 + 重畳画像」を渡して説明文を返す
+    - GPTに「全体画像 + 重畳画像」を渡して構造化出力を返す
     ※ TTL切れ時はフォールバックせず 404（/predict のやり直しを促す）
 
     実装メモ
@@ -240,20 +241,27 @@ def anomaly_explain(
         "extra": info.extra,
     }
 
-    text = gpt_svc.explain_with_images(
-        context=req.context,
-        anomaly=anomaly_payload,
-        original_image_bytes=image_bytes,
-        original_mime=image_mime,
-        overlay_png_bytes=overlay_png,
-        lang=req.lang,
-    )
-    return ExplainResponse(text=text)
+    try:
+        structured = gpt_svc.explain_with_images_structured(
+            context=req.context,
+            anomaly=anomaly_payload,
+            original_image_bytes=image_bytes,
+            original_mime=image_mime,
+            overlay_png_bytes=overlay_png,
+            lang=req.lang,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    # text は任意：UI表示やログ用に短い1文を付けたい場合だけ使う
+    # 今は空で返す（必要なら後で `summary` フィールド追加でもOK）
+    return ExplainStructuredResponse(data=structured, text="")
 
 
-@app.post("/gpt/explain", response_model=ExplainResponse)
+@app.post("/gpt/explain")
 def explain(req: ExplainRequest):
     if gpt_svc is None:
         raise HTTPException(status_code=500, detail="GPTService not initialized")
     text = gpt_svc.explain(req.model_dump())
-    return ExplainResponse(text=text)
+    # 既存互換を保つため、ここは従来通りテキスト返却にしておく
+    return {"text": text}
