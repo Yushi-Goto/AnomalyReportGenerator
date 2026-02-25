@@ -88,10 +88,6 @@ class GPTService:
                 parsed.notes = (notes + "\n" + reason).strip() if notes else reason
                 parsed.has_anomaly = suggested
 
-            # 閾値未満なら、誤検知リスクは最低でも medium に寄せる（安全側）
-            if pred_score < threshold:
-                parsed.false_positive_risk = self._max_risk(parsed.false_positive_risk, "medium")
-
         return parsed
 
     def explain_with_images_structured(
