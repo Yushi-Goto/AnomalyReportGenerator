@@ -26,6 +26,10 @@ class ExplainRequest(BaseModel):
     # heatmap_summary: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ExplainResponse(BaseModel):
+    text: str
+
+
 class AnomalyExplainRequest(BaseModel):
     """
     /anomaly/explain 用（全体画像 + 重畳画像）
@@ -46,6 +50,7 @@ class VLMAnomalyExplanation(BaseModel):
     appearance: str = Field(description="異常の見え方（何がどう変か）", min_length=1)
     evidence_from_heatmap: str = Field(description="ヒートマップ重畳画像に基づく根拠", min_length=1)
 
+    # 以下2つは “最大件数をプロンプトで依頼 + サーバ側で強制クリップ” する。
     hypotheses: List[str] = Field(default_factory=list, description="推定原因（仮説）0〜3件程度")
     checks: List[str] = Field(default_factory=list, description="次に取るべき確認（具体）0〜5件程度")
 

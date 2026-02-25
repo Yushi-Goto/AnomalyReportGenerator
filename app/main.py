@@ -12,8 +12,9 @@ from app.core.config import settings
 from app.schemas.api import (
     PredictResponse,
     ExplainRequest,
-    ExplainStructuredResponse,
+    ExplainResponse,
     AnomalyExplainRequest,
+    ExplainStructuredResponse,
 )
 from app.services.anomalib_service import AnomalibService, InferenceOutput
 from app.services.cache_service import TTLCache
@@ -258,10 +259,9 @@ def anomaly_explain(
     return ExplainStructuredResponse(data=structured, text="")
 
 
-@app.post("/gpt/explain")
+@app.post("/gpt/explain", response_model=ExplainResponse)
 def explain(req: ExplainRequest):
     if gpt_svc is None:
         raise HTTPException(status_code=500, detail="GPTService not initialized")
     text = gpt_svc.explain(req.model_dump())
-    # 既存互換を保つため、ここは従来通りテキスト返却にしておく
-    return {"text": text}
+    return ExplainResponse(text=text)
