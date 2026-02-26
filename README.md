@@ -4,15 +4,22 @@
    conda create -n AnomalyReportGeneratorWithAnomalibMainBranch python=3.10
    conda activate AnomalyReportGeneratorWithAnomalibMainBranch
    ```
-2. 各パッケージのインストール
+
+2. PyTorch（CUDA対応）をインストール
+    以下は CUDA 12.1 ビルドの PyTorch を使う場合のインストールコマンドです。
     ```commandline
-    pip install fastapi==0.115.8 uvicorn[standard]==0.30.6 python-multipart==0.0.9 pydantic==2.10.6 pydantic-settings==2.7.1 numpy==2.0.2 pillow==10.4.0 openai==1.66.3
+    pip install -r requirements-torch-cu121.txt
     ```
-3. anomalib をmainブランチとしてインストール
+
+3. anomalib（Git固定）をインストール
     ```commandline
-    pip install git+https://github.com/open-edge-platform/anomalib.git
+    pip install -r requirements-anomalib.txt
     ```
-   ↑mainブランチは更新されるため、コミットIDで固定したほうがよさそう。
+
+4. アプリ依存をインストール
+    ```commandline
+    pip install -r requirements.txt
+    ```
 
 # 学習
 詳細はAnomalibの公式ドキュメントを参照

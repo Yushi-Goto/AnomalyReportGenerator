@@ -1,0 +1,6 @@
+# anomalib は main ブランチが頻繁に更新されるため、動作確認済みコミットで固定
+# 本来はバージョン指定でインストールしたいが、現在（2026/02/26）の最新のv2.2.0においても、
+# 下記URLのバグの修正が反映されていないため、修正済みのコミットでインストールする。
+# https://github.com/open-edge-platform/anomalib/issues/3244
+
+anomalib @ git+https://github.com/open-edge-platform/anomalib.git@1fda1e81bd83e303415580a469873e5169b0543e
