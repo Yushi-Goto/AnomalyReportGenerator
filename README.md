@@ -41,7 +41,7 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
 
 2. ASGIサーバを起動
    ```commandline
-   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
    ```
    現状、ここでエラーを吐いてしまう。
 
