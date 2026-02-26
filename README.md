@@ -22,6 +22,9 @@
 anomalib train --model Patchcore --data anomalib.data.MVTecAD
 ```
 
+# サーバ設定
+.env ファイルを設定する。
+
 # API 起動
 1. モデル読み込み有効化の環境変数を設定
    詳細は下記リンクを参照
@@ -52,7 +55,7 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
    ```commandline
    curl http://127.0.0.1:8000/health
    ```
-   {"ok":true} が返れば FastAPIの雛形自体は動いています。
+   {"ok":true} が返ってくれば、問題なく起動できている。
 
 # 推論
 1. JSON形式の出力の推論
@@ -63,4 +66,9 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
 2. ヒートマップの取得
    ```commandline
    curl -X POST "http://127.0.0.1:8000/anomaly/heatmap?request_id=＜request_id＞&overlay=1&normalize=1" -o heatmap.png
+   ```
+
+3. VLMによる説明
+   ```commandline
+   curl -X POST "http://127.0.0.1:8000/anomaly/explain?request_id=<request_id>" -H "Content-Type: application/json" -d "{\"context\":\"MVTecAD screw dataset\",\"lang\":\"ja\"}"
    ```

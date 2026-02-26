@@ -6,6 +6,10 @@ import threading
 
 @dataclass
 class CacheItem:
+    """
+    value: キャッシュする値
+    expires_at: 削除される時刻
+    """
     value: Any
     expires_at: float
 

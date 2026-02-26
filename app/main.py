@@ -1,26 +1,45 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
-from fastapi.responses import StreamingResponse
-from PIL import Image
+from __future__ import annotations
+
 import io
 import uuid
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
+from PIL import Image
 
 from app.core.config import settings
+from app.schemas.api import (
+    PredictResponse,
+    ExplainRequest,
+    ExplainResponse,
+    AnomalyExplainRequest,
+    ExplainStructuredResponse,
+)
 from app.services.anomalib_service import AnomalibService, InferenceOutput
-from app.services.gpt_service import GPTService
 from app.services.cache_service import TTLCache
-from app.schemas.api import PredictResponse, ExplainRequest, ExplainResponse
+from app.services.gpt_service import GPTService
 
-app = FastAPI(title="Anomalib + GPT API", version="0.3.0")
+app = FastAPI(title="Anomalib + GPT API", version="0.5.0")
 
 anomalib_svc: AnomalibService | None = None
 gpt_svc: GPTService | None = None
 
-# request_id -> {"info": InferenceOutput, "base_rgb": np.ndarray, "anomaly_map": np.ndarray}
+# request_id -> dict
+# 例:
+# {
+#   "info": InferenceOutput,
+#   "base_rgb": np.ndarray,
+#   "anomaly_map": np.ndarray,
+#   "image_bytes": bytes,
+#   "image_mime": str,
+#   "heatmap_png_o1_n1": bytes,  # optional cache
+# }
 cache = TTLCache(ttl_seconds=300, max_items=256)  # 5分保持（PoC向け）
 
+
 @app.on_event("startup")
-def startup():
+def startup() -> None:
     global anomalib_svc, gpt_svc
     anomalib_svc = AnomalibService(
         ckpt_path=settings.anomalib_ckpt_path,
@@ -33,15 +52,17 @@ def startup():
         instructions=settings.openai_instructions,
     )
 
+
 @app.get("/health")
 def health():
     return {"ok": True}
 
+
 @app.post("/anomaly/predict", response_model=PredictResponse)
 async def anomaly_predict(file: UploadFile = File(...)):
     """
-    JSONのみ返す（主ルート）
-    - request_id を返し、heatmap用の中間結果を短時間キャッシュ
+    - 推論結果(スコア/閾値など)をJSONで返す
+    - request_id でキャッシュして、次の /anomaly/heatmap /anomaly/explain に繋げる
     """
     if anomalib_svc is None:
         raise HTTPException(status_code=500, detail="AnomalibService not initialized")
@@ -55,7 +76,22 @@ async def anomaly_predict(file: UploadFile = File(...)):
     info, base_rgb, anomaly_map = anomalib_svc.predict_all(image)
 
     request_id = uuid.uuid4().hex
-    cache.set(request_id, {"info": info, "base_rgb": base_rgb, "anomaly_map": anomaly_map})
+
+    mime = file.content_type or "image/png"
+    if not mime.startswith("image/"):
+        mime = "image/png"
+
+    cache.set(
+        request_id,
+        {
+            "info": info,
+            "base_rgb": base_rgb,
+            "anomaly_map": anomaly_map,
+            "image_bytes": content,
+            "image_mime": mime,
+            "heat_map": None,
+        },
+    )
 
     return PredictResponse(
         request_id=request_id,
@@ -64,6 +100,7 @@ async def anomaly_predict(file: UploadFile = File(...)):
         threshold=info.threshold,
         extra=info.extra,
     )
+
 
 @app.post("/anomaly/heatmap")
 async def anomaly_heatmap(
@@ -77,6 +114,13 @@ async def anomaly_heatmap(
     - 基本は request_id を使う（同じ画像を再送しない）
     - 予備として file でも生成可能（単発利用/デバッグ用）
     """
+    # overlay と normalize は内部で1に固定しておく。
+    # 理由としては、これら値を固定しておかないと、
+    # この後のエンドポイント/anomaly/explain でこれら値が固定されていないヒートマップ画像が使われてしまい、
+    # 出力される説明にぶれが生じてしまうため。
+    overlay = 1
+    normalize = 1
+
     if anomalib_svc is None:
         raise HTTPException(status_code=500, detail="AnomalibService not initialized")
 
@@ -84,25 +128,54 @@ async def anomaly_heatmap(
     if request_id:
         data = cache.get(request_id)
 
+    # request_id 指定なのにキャッシュが無い場合は、fileが無ければ 404 にする（TTL切れを明確化）
+    if request_id and data is None and file is None:
+        raise HTTPException(status_code=404, detail="request_id not found (expired). Run /anomaly/predict again")
+
     if data is None:
         if file is None:
             raise HTTPException(status_code=400, detail="Provide request_id or upload file")
+        # TODO: このインデント部分は file：元画像が添えられていた場合に再推論を行うが、こういったフォールバックはややこしくなるため、
+        #  TTLが切れてキャッシュが削除されていた場合はすべて手動で前のエンドポイントからやり直してもらった方がよさそう。
+        #  ↑デバッグ用に残しておいてもよいかも。便利かも。
         content = await file.read()
         try:
             image = Image.open(io.BytesIO(content))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid image file")
+
         info, base_rgb, anomaly_map = anomalib_svc.predict_all(image)
+        new_request_id = uuid.uuid4().hex
+
+        mime = file.content_type or "image/png"
+        if not mime.startswith("image/"):
+            mime = "image/png"
     else:
+        new_request_id = request_id
         info = data["info"]
         base_rgb = data["base_rgb"]
         anomaly_map = data["anomaly_map"]
+        content = data["image_bytes"]
+        mime = data["image_mime"]
 
     png = anomalib_svc.make_heatmap_png(
         base_rgb=base_rgb,
         anomaly_map=anomaly_map,
         overlay=bool(overlay),
         normalize=bool(normalize),
+    )
+
+    # 再度キャッシュする（指定のリクエストIDに対応するキャッシュが残っていた場合もTTLは新たに初期値に更新される。）
+    cache.set(
+        new_request_id,
+        {
+            "info": info,
+            "base_rgb": base_rgb,
+            "anomaly_map": anomaly_map,
+            "image_bytes": content,
+            "image_mime": mime,
+            "heat_map": png,
+        },
     )
 
     headers = {}
@@ -115,6 +188,76 @@ async def anomaly_heatmap(
             headers["X-Request-Id"] = request_id
 
     return StreamingResponse(io.BytesIO(png), media_type="image/png", headers=headers)
+
+
+@app.post("/anomaly/explain", response_model=ExplainStructuredResponse)
+def anomaly_explain(
+    request_id: str = Query(..., description="Use request_id from /anomaly/predict"),
+    req: AnomalyExplainRequest = AnomalyExplainRequest(),
+):
+    """
+    - request_id のキャッシュから「元画像bytes + anomaly_map」を取り出す
+    - 重畳PNGを生成（またはキャッシュがあれば再利用）
+    - GPTに「全体画像 + 重畳画像」を渡して構造化出力を返す
+    ※ TTL切れ時はフォールバックせず 404（/predict のやり直しを促す）
+
+    実装メモ
+    - /anomaly/heatmap と同様に file フォールバックをデバッグ専用に実装してもいいかも。
+    """
+    if anomalib_svc is None:
+        raise HTTPException(status_code=500, detail="AnomalibService not initialized")
+    if gpt_svc is None:
+        raise HTTPException(status_code=500, detail="GPTService not initialized")
+
+    data = cache.get(request_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="request_id not found (expired). Run /anomaly/predict again")
+
+    image_bytes: Optional[bytes] = data.get("image_bytes")
+    image_mime: str = data.get("image_mime", "image/png")
+    # 以下については必要ないかも
+    if image_bytes is None:
+        # 今後 predict を改修し忘れた場合にすぐ気づけるように明示
+        raise HTTPException(status_code=500, detail="cached image_bytes not found. Run /anomaly/predict again")
+
+    info = data["info"]
+    base_rgb = data["base_rgb"]
+    anomaly_map = data["anomaly_map"]
+
+    overlay_png: Optional[bytes] | None = data.get("heat_map")
+    if overlay_png is None:
+        # ヒートマップ画像については、派生成生物なので材料があればここで作り直す（フォールバック）。
+        overlay_png = anomalib_svc.make_heatmap_png(
+            base_rgb=base_rgb,
+            anomaly_map=anomaly_map,
+            overlay=True,
+            normalize=True,
+        )
+        data["heat_map"] = overlay_png
+
+    anomaly_payload = {
+        "pred_label": info.pred_label,
+        "pred_score": info.pred_score,
+        "threshold": info.threshold,
+        "extra": info.extra,
+    }
+
+    try:
+        structured = gpt_svc.explain_with_images_structured(
+            context=req.context,
+            anomaly=anomaly_payload,
+            original_image_bytes=image_bytes,
+            original_mime=image_mime,
+            overlay_png_bytes=overlay_png,
+            lang=req.lang,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    # text は任意：UI表示やログ用に短い1文を付けたい場合だけ使う
+    # 今は空で返す（必要なら後で `summary` フィールド追加でもOK）
+    return ExplainStructuredResponse(data=structured, text="")
+
 
 @app.post("/gpt/explain", response_model=ExplainResponse)
 def explain(req: ExplainRequest):
