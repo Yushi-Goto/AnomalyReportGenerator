@@ -55,7 +55,41 @@ def startup() -> None:
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    # torch は環境によって未導入の可能性もあるため、ここでは遅延import + 例外吸収
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        cuda_version = torch.version.cuda
+        device_name = torch.cuda.get_device_name(0) if cuda_available else None
+        device_count = int(torch.cuda.device_count()) if cuda_available else 0
+    except Exception as e:
+        cuda_available = False
+        cuda_version = None
+        device_name = None
+        device_count = 0
+        # 例外は文字列化して返す（デバッグ用途）
+        return {
+            "ok": True,
+            "torch": {"error": repr(e)},
+            "cuda": {
+                "available": cuda_available,
+                "version": cuda_version,
+                "device_name": device_name,
+                "device_count": device_count,
+            },
+        }
+
+    return {
+        "ok": True,
+        "torch": {"cuda": cuda_version},
+        "cuda": {
+            "available": cuda_available,
+            "version": cuda_version,
+            "device_name": device_name,
+            "device_count": device_count,
+        },
+    }
 
 
 @app.post("/anomaly/predict", response_model=PredictResponse)

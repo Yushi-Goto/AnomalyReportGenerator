@@ -62,7 +62,20 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
    ```commandline
    curl http://127.0.0.1:8000/health
    ```
-   {"ok":true} が返ってくれば、問題なく起動できている。
+   例）
+   ```json
+   {
+     "ok": true,
+     "torch": {"cuda": "12.1"},
+     "cuda": {
+       "available": true,
+       "version": "12.1",
+       "device_name": "NVIDIA GeForce ...",
+       "device_count": 1
+     }
+   }
+   ```
+   `cuda.available=true` であれば GPU が利用可能です。
 
 # 推論
 1. JSON形式の出力の推論
