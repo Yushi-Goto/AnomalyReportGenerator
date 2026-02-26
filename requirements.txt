@@ -8,7 +8,7 @@ pillow==10.4.0
 
 openai==1.66.3
 
-# anomalib は環境差が出やすいのでまずは最新でOK（固定したければ後でpin）
-# anomalib
-# torch
-# torchvision
+# NOTE:
+# - torch/torchvision はGPU(CUDA)ビルドの配布先が通常のPyPIと異なるため、別ファイル
+#   requirements-torch-cu121.txt で管理しています。
+# - anomalib は Git 版を固定する運用のため、requirements-anomalib.txt を参照してください。

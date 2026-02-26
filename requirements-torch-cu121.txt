@@ -1,0 +1,6 @@
+# CUDA 12.1 ビルドの PyTorch を使う（CUDA 12.4 環境でも通常動作します）
+--index-url https://download.pytorch.org/whl/cu121
+
+torch
+torchvision
+torchaudio
