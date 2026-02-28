@@ -1,95 +1,200 @@
-# 環境構築
-1. conda 仮想環境の作成・起動
+# Overview
+AnomalyReportGenerator は、
+`異常検知モデル（Anomalib）`と `Vision-Language Model（VLM）`を統合し、
+**異常の位置・見え方・仮説・次の確認事項までを構造化JSONで生成するAPI基盤**です。
+
+従来の異常検知システムは、
+- スコアのみ提示される 
+- ヒートマップはあるが説明がない 
+- 出力が評価不能な自由文になる
+
+といった課題を抱えています。
+
+本プロジェクトでは、
+- 異常スコア 
+- ヒートマップ可視化 
+- VLMによる説明生成 
+- JSON Schema による構造化出力 
+- サーバ側整合性補正
+
+を統合し、評価可能な説明可能AIパイプラインを実装しました。
+
+# Problem Statement
+## 従来の異常検知の課題
+1. スコアのみでは判断根拠が弱い
+2. ヒートマップは視覚的だが定量評価が困難
+3. 自由文説明では再現性がない
+4. VLM出力がモデル結果と矛盾する可能性がある
+
+## 本プロジェクトの解決方針
+- Structured Outputs による形式固定
+- 仮説数・確認事項数の制御
+- pred_score と threshold の整合補正
+- 入力条件（normalize）の固定による再現性確保
+
+# Architecture
+## Processing Flow
+```
+[Input Image]
+      ↓
+Anomalib (PatchCore)
+      ↓
+anomaly_map + pred_score
+      ↓
+Heatmap Overlay生成（normalize固定）
+      ↓
+GPT (Structured Outputs)
+      ↓
+構造化JSON説明
+```
+
+## API Flow
+1. `/anomaly/predict`
+   → 異常スコア算出 + TTLキャッシュ保存
+2. `/anomaly/heatmap`
+   → ヒートマップPNG生成（overlay=1, normalize=1固定） + TTLキャッシュ保存
+3. `/anomaly/explain`
+   → 元画像 + 重畳画像 + 推論結果をVLMへ入力 
+   → JSON構造で説明を返却
+
+キャッシュは TTL 300秒。
+
+# Example Output
+```
+{
+   "data":{
+      "has_anomaly":true,
+      "location":"bottom-right",
+      "appearance":"欠けまたは破損があるように見える",
+      "evidence_from_heatmap":"ヒートマップの赤色領域が底部の右側に集中しているため",
+      "hypotheses":[
+         "機械的な摩耗や衝撃による損傷",
+         "製造過程での欠陥",
+         "不適切な取り扱いによる破損"
+      ],
+      "checks":[
+         "物理的損傷の詳細な検査を行う",
+         "製造プロセスの見直し",
+         "類似製品の追加サンプリング検査"
+      ],
+      "false_positive_risk":"medium",
+      "notes":"異常スコアが高く、明確な異常が見られるため、迅速な対応が必要"
+   },
+   "text":""
+}
+```
+
+# Tech Stack
+- Python 3.10 
+- PyTorch (CUDA 12.x)
+- Anomalib (PatchCore)
+- FastAPI 
+- OpenAI Responses API 
+- Pydantic 
+- 自作 TTLCache
+
+
+
+# Setup
+1. 仮想環境
    ```commandline
-   conda create -n AnomalyReportGeneratorWithAnomalibMainBranch python=3.10
-   conda activate AnomalyReportGeneratorWithAnomalibMainBranch
+   conda create -n AnomalyReportGenerator python=3.10
+   conda activate AnomalyReportGenerator
    ```
 
-2. PyTorch（CUDA対応）をインストール
+2. PyTorch (CUDA)
     
     以下は CUDA 12.1 ビルドの PyTorch を使う場合のインストールコマンドです。
     ```commandline
     pip install -r requirements-torch-cu121.txt
     ```
 
-3. anomalib（Git固定）をインストール
+3. anomalib
     ```commandline
     pip install -r requirements-anomalib.txt
     ```
 
-4. アプリ依存をインストール
+4. アプリ依存
     ```commandline
     pip install -r requirements.txt
     ```
 
-# 学習
-詳細はAnomalibの公式ドキュメントを参照
+# Train anomaly detection models
+詳細はAnomalibの公式ドキュメントを参照してください。
 
 ## PatchCore を MVTecAD で学習
 ```commandline
 anomalib train --model Patchcore --data anomalib.data.MVTecAD
 ```
 
-# サーバ設定
-.env ファイルを設定する。
+# Setting Environment Variables
+`.env` ファイルに環境変数を設定する。
 
-# API 起動
-1. モデル読み込み有効化の環境変数を設定
-   詳細は下記リンクを参照
-   https://anomalib.readthedocs.io/en/latest/markdown/guides/reference/deploy/index.html#anomalib.deploy.TorchInferencer
-   ```commandline
-   export TRUST_REMOTE_CODE=1
-   ```
-   
-   ※ Anaconda Prompt (miniconda3) の場合は下記コマンドを実行
-   ```commandline
-   conda env config vars set TRUST_REMOTE_CODE=1
-   conda activate AnomalyReportGeneratorWithAnomalibMainBranch
-   ```
+| 環境変数             | 説明                                                     | 例                                                        | 
+| -------------------- | -------------------------------------------------------- | --------------------------------------------------------- | 
+| ANOMALIB_CKPT_PATH   | 推論に用いる学習済み異常検知モデルのパス                 | ./models/model.ckpt                                       | 
+| ANOMALIB_MODEL_CLASS | 異常検知アルゴリズム名<br>ckptを作ったモデル名に合わせる | Padim<br>Patchcore<br>EfficientAd<br>etc.                 | 
+| ANOMALIB_DEVICE      | 推論時のデバイス設定                                     | auto<br>cpu<br>cuda                                       | 
+| OPENAI_API_KEY       | OpenAI APIキー                                           | sk-...                                                    | 
+| OPENAI_MODEL         | VLMモデル名                                              | gpt-4o                                                    | 
+| OPENAI_INSTRUCTIONS  | VLMへのメイン指示文                                      | You are a helpful assistant for anomaly detection triage. | 
 
-2. ASGIサーバを起動
-   ```commandline
-   uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
-   ```
-   現状、ここでエラーを吐いてしまう。
+`OPENAI_MODEL` については、`gpt-4o` のみで動作を確認済み。
 
-3. サーバの起動を確認
-   
-   ブラウザで
-   ```
-   http://127.0.0.1:8000/health
-   ```
-   または
-   ```commandline
-   curl http://127.0.0.1:8000/health
-   ```
-   例）
-   ```json
-   {
-     "ok": true,
-     "torch": {"cuda": "12.1"},
-     "cuda": {
-       "available": true,
-       "version": "12.1",
-       "device_name": "NVIDIA GeForce ...",
-       "device_count": 1
-     }
+# RUN
+```commandline
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+# Health Check
+```commandline
+GET /health
+```
+
+例：
+```json
+{
+   "ok": true, 
+   "torch": {"cuda": "12.1"}, 
+   "cuda": {
+      "available": true,
+      "version": "12.1",
+      "device_name": "NVIDIA GeForce ...",
+      "device_count": 1
    }
-   ```
-   `cuda.available=true` であれば GPU が利用可能です。
+}
+```
 
-# 推論
-1. JSON形式の出力の推論
-   ```commandline
-   curl -X POST "http://127.0.0.1:8000/anomaly/predict" -F "file=@datasets\MVTecAD\bottle\test\good\000.png"
-   ```
+# Quick API Usage
+## 1. Predict
+```commandline
+curl -X POST "http://127.0.0.1:8000/anomaly/predict" \
+  -F "file=@datasets\MVTecAD\bottle\test\good\000.png"
+```
 
-2. ヒートマップの取得
-   ```commandline
-   curl -X POST "http://127.0.0.1:8000/anomaly/heatmap?request_id=＜request_id＞&overlay=1&normalize=1" -o heatmap.png
-   ```
+レスポンス例：
+```json
+{
+   "pred_label":"1",
+   "pred_score":0.9495923519134521,
+   "threshold":0.7,
+   "extra":{
+      "anomaly_map":"<available>",
+      "pred_mask":"<available>"
+   },
+   "request_id":"ca4b790402464897979952032dd51a96"
+}
+```
 
-3. VLMによる説明
-   ```commandline
-   curl -X POST "http://127.0.0.1:8000/anomaly/explain?request_id=<request_id>" -H "Content-Type: application/json" -d "{\"context\":\"MVTecAD screw dataset\",\"lang\":\"ja\"}"
-   ```
+## 2. Heatmap
+```commandline
+curl -X POST "http://127.0.0.1:8000/anomaly/heatmap?request_id=<request_id>" \
+  -o heatmap.png
+```
+
+## 3. Explain
+```commandline
+curl -X POST "http://127.0.0.1:8000/anomaly/explain?request_id=<request_id>" \
+  -H "Content-Type: application/json" \
+  -d "{\"context\":\"MVTecAD screw dataset\",\"lang\":\"ja\"}"
+```
