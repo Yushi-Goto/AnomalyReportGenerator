@@ -58,10 +58,41 @@ class GPTService:
     def _max_risk(a: Literal["low", "medium", "high"], b: Literal["low", "medium", "high"]) -> Literal["low", "medium", "high"]:
         return a if _FALSE_POSITIVE_ORDER[a] >= _FALSE_POSITIVE_ORDER[b] else b
 
+    @staticmethod
+    def _label_to_has_anomaly(pred_label: Any) -> Optional[bool]:
+        """
+        pred_label の表現ゆれを吸収して has_anomaly(bool) に変換する。
+        変換できない場合は None を返し、別ロジックにフォールバックする。
+        """
+        if pred_label is None:
+            return None
+
+        # bool は int のサブクラスなので先に判定
+        if isinstance(pred_label, bool):
+            return bool(pred_label)
+
+        # 数値
+        if isinstance(pred_label, (int, float)):
+            if pred_label == 1:
+                return True
+            if pred_label == 0:
+                return False
+            return None
+
+        # 文字列
+        s = str(pred_label).strip().lower()
+        if s in {"1", "true", "t", "yes", "y", "anomaly", "abnormal", "positive", "defect"}:
+            return True
+        if s in {"0", "false", "f", "no", "n", "normal", "ok", "negative"}:
+            return False
+
+        return None
+
     def _postprocess_structured(
         self,
         *,
         parsed: VLMAnomalyExplanation,
+        pred_label: Optional[str],
         pred_score: Optional[float],
         threshold: Optional[float],
         max_hypotheses: int = 3,
@@ -70,13 +101,30 @@ class GPTService:
         """
         サーバ側で “確実に” 制約と整合性を担保する。
         - hypotheses/checks の最大件数を強制
-        - pred_score と threshold がある場合、has_anomaly を境界と整合させる
+        - pred_label がある場合、has_anomaly をこれに合わせる。
+        - pred_label がない、かつ pred_score と threshold がある場合、has_anomaly を境界と整合させる
         """
         # 1) 件数制限
         parsed.hypotheses = self._clip_list(parsed.hypotheses, max_hypotheses)
         parsed.checks = self._clip_list(parsed.checks, max_checks)
 
-        # 2) pred_score/threshold 整合チェック（両方ある時のみ）
+        # 2) pred_label がある場合は最優先で has_anomaly を整合させる
+        if pred_label is not None:
+            suggested = self._label_to_has_anomaly(pred_label)
+
+            # 解釈不能なら pred_label 補正はスキップして fallback に回す
+            if suggested is not None:
+                if parsed.has_anomaly != suggested:
+                    reason = (
+                        f"[consistency_fix] has_anomaly was {parsed.has_anomaly} "
+                        f"but adjusted to {suggested} because pred_label={pred_label}."
+                    )
+                    notes = (parsed.notes or "").strip()
+                    parsed.notes = (notes + "\n" + reason).strip() if notes else reason
+                    parsed.has_anomaly = suggested
+                return parsed
+
+        # 3) pred_score/threshold 整合チェック（両方ある時のみ）
         if pred_score is not None and threshold is not None:
             suggested = pred_score >= threshold
             if parsed.has_anomaly != suggested:
@@ -163,11 +211,13 @@ class GPTService:
             # パースできない場合は例外にして気づけるようにする（PoCでは早期検知優先）
             raise ValueError("Structured output parsing failed (output_parsed is None).")
 
+        pred_label = anomaly.get("pred_label")
         pred_score = anomaly.get("pred_score")
         threshold = anomaly.get("threshold")
 
         return self._postprocess_structured(
             parsed=parsed,
+            pred_label=pred_label,
             pred_score=pred_score,
             threshold=threshold,
             max_hypotheses=3,
