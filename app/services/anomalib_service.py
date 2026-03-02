@@ -87,14 +87,17 @@ class AnomalibService:
                 except Exception:
                     pred_label = None
 
-            # threshold（無い場合あり）
+            # threshold（normalized_image_threshold のみを採用。無ければ None）
             threshold = None
-            if hasattr(pred, "threshold"):
-                try:
-                    th = pred.threshold
-                    threshold = float(th.reshape(-1)[0].item()) if hasattr(th, "numel") else float(th)
-                except Exception:
-                    threshold = None
+            if hasattr(self.model, "post_processor"):
+                pp = self.model.post_processor
+                # 1) normalized_image_threshold があれば最優先（pred_scoreとスケールが合う想定）
+                if hasattr(pp, "normalized_image_threshold"):
+                    try:
+                        nth = pp.normalized_image_threshold
+                        threshold = float(nth.reshape(-1)[0].item()) if hasattr(nth, "numel") else float(nth)
+                    except Exception:
+                        threshold = None
 
             if not hasattr(pred, "anomaly_map"):
                 raise RuntimeError("Prediction does not include anomaly_map")
