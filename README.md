@@ -1,14 +1,22 @@
 # Overview
 AnomalyReportGenerator は、
 `異常検知モデル（Anomalib）`と `Vision-Language Model（VLM）`を統合し、
-**異常の位置・見え方・仮説・次の確認事項までを構造化JSONで生成するAPI基盤**です。
+**異常の位置・見え方・仮説・次の確認事項までを構造化JSONとして生成**します。
 
-従来の異常検知システムは、
+## Background
+従来の異常検知システム（二値分類、セグメンテーション）の出力は、
 - スコアのみ提示される 
 - ヒートマップはあるが説明がない 
-- 出力が評価不能な自由文になる
 
-といった課題を抱えています。
+といったことが前提です。
+
+しかし、実際の製造業においては**異常発生後の最終判断は人間が行う**ケースがほとんどです。
+そのため、上述の出力では**AIの判断根拠を人間が理解することが困難**な場合があり、
+- 検知結果を信じてプラントを停止すればよいのか
+- 低リスクとみなして無視するのか
+
+といったように最終判断に迷ってしまうことがあります。
+
 
 本プロジェクトでは、
 - 異常スコア 
@@ -19,18 +27,20 @@ AnomalyReportGenerator は、
 
 を統合し、評価可能な説明可能AIパイプラインを実装しました。
 
-# Problem Statement
-## 従来の異常検知の課題
-1. スコアのみでは判断根拠が弱い
-2. ヒートマップは視覚的だが定量評価が困難
-3. 自由文説明では再現性がない
-4. VLM出力がモデル結果と矛盾する可能性がある
+## VLM Design Points
+通常のVLM出力の場合、
+1. 自由文説明では再現性がない
+2. VLM出力がモデル結果と矛盾する可能性がある
 
-## 本プロジェクトの解決方針
+といった課題が想定されます。
+
+そこで、本プロジェクトの解決方針としては、
 - Structured Outputs による形式固定
 - 仮説数・確認事項数の制御
 - pred_score と threshold の整合補正
 - 入力条件（normalize）の固定による再現性確保
+
+に取り組みました。
 
 # Architecture
 ## Processing Flow
@@ -43,7 +53,7 @@ anomaly_map + pred_score
       ↓
 Heatmap Overlay生成（normalize固定）
       ↓
-GPT (Structured Outputs)
+VLM (Structured Outputs)
       ↓
 構造化JSON説明
 ```
@@ -54,7 +64,7 @@ GPT (Structured Outputs)
 2. `/anomaly/heatmap`
    → ヒートマップPNG生成（overlay=1, normalize=1固定） + TTLキャッシュ保存
 3. `/anomaly/explain`
-   → 元画像 + 重畳画像 + 推論結果をVLMへ入力 
+   → 元画像 + ヒートマップ重畳画像 + 推論結果をVLMへ入力 
    → JSON構造で説明を返却
 
 キャッシュは TTL 300秒。
@@ -122,6 +132,8 @@ GPT (Structured Outputs)
 # Train anomaly detection models
 詳細はAnomalibの公式ドキュメントを参照してください。
 
+https://github.com/open-edge-platform/anomalib/tree/1fda1e81bd83e303415580a469873e5169b0543e?tab=readme-ov-file#-training
+
 ## PatchCore を MVTecAD で学習
 ```commandline
 anomalib train --model Patchcore --data anomalib.data.MVTecAD
@@ -139,7 +151,7 @@ anomalib train --model Patchcore --data anomalib.data.MVTecAD
 | OPENAI_MODEL         | VLMモデル名                                              | gpt-4o                                                    | 
 | OPENAI_INSTRUCTIONS  | VLMへのメイン指示文                                      | You are a helpful assistant for anomaly detection triage. | 
 
-`OPENAI_MODEL` については、`gpt-4o` のみで動作を確認済み。
+`OPENAI_MODEL` については、`gpt-4o` のみで動作を確認済みです。
 
 # RUN
 ```commandline
