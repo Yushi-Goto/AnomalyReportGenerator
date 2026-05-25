@@ -1,8 +1,11 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+import os
+
+ENV_FILE_PATH = os.getenv("ENV_FILE_PATH", ".env")
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=ENV_FILE_PATH, env_file_encoding="utf-8")
 
     # Anomalib (Engine)
     anomalib_ckpt_path: str = Field(default="./models/model.ckpt", alias="ANOMALIB_CKPT_PATH")
