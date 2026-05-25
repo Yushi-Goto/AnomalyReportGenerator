@@ -1,0 +1,26 @@
+# .env はAIエージェント用のダミー値として見せる
+# .env.example も見せる
+
+# ただし、派生envファイルは見せない
+.env.local
+.env.production
+.env.secret
+.env.real
+*.key
+*.pem
+
+datasets/
+models/
+results/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+models/
+datasets/
+results/
+*.ckpt
+*.pt
+*.pth
+*.onnx
