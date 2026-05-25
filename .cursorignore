@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+
+models/
+datasets/
+results/
+*.ckpt
+*.pt
+*.pth
+*.onnx

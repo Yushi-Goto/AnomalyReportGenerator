@@ -1,0 +1,11 @@
+---
+description: Rules for Cursor Agent in AnomalyReportGenerator
+alwaysApply: true
+---
+
+- Follow `AGENTS.md` when working in this repository.
+- Never access `.env` or `.env.*`.
+- Use `.env.example` only.
+- Do not modify `datasets/`, `models/`, or `results/` unless explicitly requested.
+- Prefer small, reviewable diffs.
+- Ask before running expensive commands, training, GPU-heavy inference, or commands that may call external APIs.
