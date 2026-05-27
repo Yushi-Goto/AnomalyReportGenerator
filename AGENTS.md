@@ -3,6 +3,14 @@
 ## Project
 AnomalyReportGenerator is a FastAPI-based anomaly report generation project using Anomalib and OpenAI VLM structured outputs.
 
+## Documentation
+
+- Before making changes, review relevant documents under `docs/`, especially:
+  - `docs/anomaly_report_generator_requirements.md`
+- Treat the requirements document as the parent document for current project purpose, scope, API flow, design intent, and AI-driven development rules.
+- If an implementation change affects API behavior, input/output schemas, cache behavior, error handling, VLM output semantics, or development rules, update the relevant documentation as part of the same change.
+- Do not make changes that conflict with the documented project scope or design intent unless explicitly requested.
+
 ## Security
 - Never read, print, edit, summarize, or copy `.env` or `.env.*`.
 - Use `.env.example` only to understand required environment variables.
@@ -19,6 +27,9 @@ AnomalyReportGenerator is a FastAPI-based anomaly report generation project usin
 - Explain the planned change before large refactors.
 - Keep API responses backward-compatible unless explicitly requested.
 - Update README when commands, API behavior, or setup steps change.
+
+## Backlog Work
+- When working on backlog items, refer to `docs/templates/ai_agent_backlog_template.md` and ensure the task includes scope, acceptance criteria, test viewpoints, and verification steps.
 
 ## Project Commands
 Install dependencies in this order:
