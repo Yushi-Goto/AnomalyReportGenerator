@@ -28,6 +28,9 @@ AnomalyReportGenerator is a FastAPI-based anomaly report generation project usin
 - Keep API responses backward-compatible unless explicitly requested.
 - Update README when commands, API behavior, or setup steps change.
 
+## Backlog Work
+- When working on backlog items, refer to `docs/templates/ai_agent_backlog_template.md` and ensure the task includes scope, acceptance criteria, test viewpoints, and verification steps.
+
 ## Project Commands
 Install dependencies in this order:
 ```bash
