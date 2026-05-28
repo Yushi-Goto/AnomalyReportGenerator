@@ -27,9 +27,13 @@ AnomalyReportGenerator is a FastAPI-based anomaly report generation project usin
 - Explain the planned change before large refactors.
 - Keep API responses backward-compatible unless explicitly requested.
 - Update README when commands, API behavior, or setup steps change.
+- Update `docs/anomaly_report_generator_requirements.md` when requirements, user-facing behavior, system responsibilities, constraints, or major design assumptions change.
+- Do not introduce or change requirements without explicit approval.
 
 ## Backlog Work
 - When working on backlog items, refer to `docs/templates/ai_agent_backlog_template.md` and ensure the task includes scope, acceptance criteria, test viewpoints, and verification steps.
+- Check whether the backlog changes README, requirements docs, or both.
+- Do not expand the backlog scope beyond the stated requirements without explicit approval.
 
 ## Project Commands
 Install dependencies in this order:
